@@ -19,7 +19,7 @@ We also see an email using the same name malwareadm@proteus.local
 
 Potential username "malwareadm" 
 
-I tried uploading a PHP shell file, but is filtered and only accpets executables. We try some curl fu
+I tried uploading a PHP shell file, but is filtered and only accpets executables. We try some curl fu. We fail and move on.
 
 Can try a proxy like burp or webscarab, maybe get better results.
 
